@@ -1,5 +1,5 @@
 from supabase import create_client, Client
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import random
 
 
@@ -23,38 +23,41 @@ products = [
 ]
 
 # Insert products
-for p in products:
-    supabase.table("product_master").insert(p).execute()
+#for p in products:
+#    supabase.table("product_master").insert(p).execute()
 
 # -------------------------------
 # 2️⃣ Prepopulate Sales Transactions
 # -------------------------------
-product_records = supabase.table("product_master").select("product_id, product_name, retail_price").execute().data
-regions = ["North", "South", "East", "West"]
-stores = [1,2,3,4]
 
-start_date = datetime(2025, 9, 1)
+# Fetch products and stores
+products = supabase.table("product_master").select("product_id, retail_price").execute().data
+stores = supabase.table("store_master").select("store_id, store_region").execute().data
 
-transactions = []
-for i in range(500):  # generate 500 transactions
-    prod = random.choice(product_records)
-    product_id = prod["product_id"]
-    retail_price = prod["retail_price"]
-    units_sold = random.randint(50, 200)
-    store_id = random.choice(stores)
-    region = random.choice(regions)
-    created_at = start_date + timedelta(days=random.randint(0,10), hours=random.randint(8,18))
-    transactions.append({
-        "product_id": product_id,
-        "units_sold": units_sold,
-        "sale_price": retail_price,
-        "store_id": store_id,
-        "region": region,
-        "created_at": created_at.isoformat()
+sales_data = []
+
+for _ in range(10000):
+    product = random.choice(products)
+    store = random.choice(stores)
+    
+    random_days = random.randint(0, 89)
+    sale_date = datetime.now(timezone.utc) - timedelta(days=random_days)
+    
+    units = random.randint(1, 20)
+    price = round(random.uniform(0.8, 1.0) * product["retail_price"], 2)
+    
+    sales_data.append({
+        "product_id": product["product_id"],
+        "store_id": store["store_id"],
+        "units_sold": units,
+        "sale_price": price,
+        "created_at": sale_date.isoformat(),
+        "region": store.get("store_region")
     })
 
-# Insert transactions in batches of 50
-for i in range(0, len(transactions), 50):
-    supabase.table("sales_transactions").insert(transactions[i:i+50]).execute()
+# Insert in batches of 500
+batch_size = 500
+for i in range(0, len(sales_data), batch_size):
+    supabase.table("sales_transactions").insert(sales_data[i:i+batch_size]).execute()
 
-print("Prepopulation complete: products + sales transactions")
+print("Inserted 10,000 sales transactions successfully ✅")

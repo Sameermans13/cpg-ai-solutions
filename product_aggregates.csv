@@ -1,0 +1,20 @@
+product_id,product_name,total_units_sold,total_revenue,avg_sale_price,promo_pct
+201,KitKat 4-Pack,6964,62656.0,8.966101694915254,1.694915254237288
+8,Hershey's Syrup,8659,30306.5,3.5,0.0
+17,Hershey's Cocoa Powder,6844,27376.0,4.0,0.0
+9,Hershey's Cocoa Powder,6758,27032.0,4.0,0.0
+13,Hershey's Kisses,6783,20349.0,3.0,0.0
+5,Hershey's Kisses,6405,19215.0,3.0,0.0
+111,Hershey's Dark Chocolate Bar 10Oz,5978,17909.0,2.98,2.0
+3,Hershey's Dark Chocolate Bar,10145,17753.75,1.75,0.0
+16,Hershey's Syrup,5066,17731.0,3.5,0.0
+14,KitKat 4-Pack,6588,16470.0,2.5,0.0
+6,KitKat 4-Pack,6443,16107.5,2.5,0.0
+1,KitKat Bar - Single,6597,13194.0,2.0,0.0
+7,Twix 2-Pack,6499,12998.0,2.0,0.0
+15,Twix 2-Pack,6334,12668.0,2.0,0.0
+11,Hershey's Dark Chocolate Bar,6702,11728.5,1.75,0.0
+2,Hershey's Milk Chocolate Bar,6077,9115.5,1.5,0.0
+10,Hershey's Milk Chocolate Bar,5674,8511.0,1.5,0.0
+12,Reese's Peanut Butter Cups,6410,8012.5,1.25,0.0
+4,Reese's Peanut Butter Cups,6335,7918.75,1.25,0.0
