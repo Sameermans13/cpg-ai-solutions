@@ -3,6 +3,8 @@
 import streamlit as st
 from supabase import create_client, Client
 import google.generativeai as genai
+# Add 'date' to your datetime import at the top of the file
+from datetime import datetime, date
 
 # --- Page Config ---
 st.set_page_config(page_title="SQL Chatbot", layout="wide")
@@ -30,13 +32,21 @@ if st.button("Get Answer"):
     if user_query:
         with st.spinner("The AI analyst is thinking..."):
             try:
-                # 1. Generate the SQL query using an improved "Few-Shot" prompt
+                # 1. Generate the SQL query using an improved, date-aware prompt
                 llm = genai.GenerativeModel('gemini-1.5-flash-latest')
                 
-                # --- NEW: ADVANCED FEW-SHOT PROMPT ---
+                # Get today's date to pass into the prompt
+                current_date = date.today().strftime('%Y-%m-%d')
+
+                # --- NEW: CONTEXT-AWARE PROMPT ---
                 schema_prompt = f"""
                 You are a world-class SQL writer. Given a user question, you will write a single, valid PostgreSQL query to answer it.
-                You must only write the SQL query and nothing else. Do not wrap the query in markdown.
+                You must only write the SQL query and nothing else.
+
+                IMPORTANT RULES:
+                - The current date is {current_date}. All queries MUST include a WHERE clause to filter for dates on or before this date. Use `sale_date <= '{current_date}'`.
+                - Ensure proper SQL syntax with spaces between all keywords and table/column names.
+                - DO NOT include a trailing semicolon at the end of the query.
 
                 My database has the following tables and columns:
                 1. daily_sales_summary (sale_date, product_id, store_id, total_units_sold, average_sale_price, was_on_promotion)
@@ -44,21 +54,15 @@ if st.button("Get Answer"):
                 3. store_master (store_id, store_name, store_channel, store_region)
 
                 --- EXAMPLES ---
-
                 -- Example 1: Find the total sales for a specific product.
                 User Question: "How many units of KitKat 4-finger were sold?"
                 SQL Query:
-                SELECT SUM(t1.total_units_sold) FROM daily_sales_summary AS t1 JOIN product_master AS t2 ON t1.product_id = t2.product_id WHERE t2.product_name = 'KitKat 4-finger'
+                SELECT SUM(t1.total_units_sold) FROM daily_sales_summary AS t1 JOIN product_master AS t2 ON t1.product_id = t2.product_id WHERE t2.product_name = 'KitKat 4-finger' AND t1.sale_date <= '{current_date}'
 
-                -- Example 2: Find the total revenue for a brand containing a special character.
+                -- Example 2: Find the total revenue for a brand.
                 User Question: "What was the total revenue for all Reese's products?"
                 SQL Query:
-                SELECT SUM(t1.total_units_sold * t1.average_sale_price) FROM daily_sales_summary AS t1 JOIN product_master AS t2 ON t1.product_id = t2.product_id WHERE t2.product_name LIKE 'Reese''s%'
-
-                -- Example 3: Find the top store channel for a product category.
-                User Question: "Which store channel sold the most candy?"
-                SQL Query:
-                SELECT t3.store_channel FROM daily_sales_summary AS t1 JOIN product_master AS t2 ON t1.product_id = t2.product_id JOIN store_master AS t3 ON t1.store_id = t3.store_id WHERE t2.product_category = 'Candy' GROUP BY t3.store_channel ORDER BY SUM(t1.total_units_sold) DESC LIMIT 1
+                SELECT SUM(t1.total_units_sold * t1.average_sale_price) FROM daily_sales_summary AS t1 JOIN product_master AS t2 ON t1.product_id = t2.product_id WHERE t2.product_name LIKE 'Reese''s%' AND t1.sale_date <= '{current_date}'
                 
                 --- END EXAMPLES ---
 

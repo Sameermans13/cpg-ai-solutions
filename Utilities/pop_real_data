@@ -13,99 +13,93 @@ key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN5
 START_DATE = date(2025, 1, 1)
 END_DATE = date(2025, 12, 31) 
 
-# --- PRODUCT PROFILES (Now includes retail price from your table) ---
-product_profiles = {
-    38: {"name": "Hershey's Milk Chocolate", "baseline": 50, "retail_price": 3.99, "valentines": 5, "easter": 4, "halloween": 2, "holiday": 3},
-    39: {"name": "Hershey's Dark Chocolate", "baseline": 30, "retail_price": 4.49, "valentines": 6, "easter": 3, "halloween": 2, "holiday": 4},
-    40: {"name": "Reese's PB Cups",        "baseline": 60, "retail_price": 1.99, "valentines": 4, "easter": 7, "halloween": 10, "holiday": 5},
-    41: {"name": "KitKat",                   "baseline": 55, "retail_price": 2.49, "valentines": 2, "easter": 3, "halloween": 5, "holiday": 3},
-    42: {"name": "Hershey's Kisses",       "baseline": 40, "retail_price": 5.99, "valentines": 8, "easter": 6, "halloween": 4, "holiday": 9},
-    43: {"name": "Twizzlers Strawberry",     "baseline": 35, "retail_price": 2.99, "valentines": 1.5, "easter": 2, "halloween": 6, "holiday": 2},
-    44: {"name": "Jolly Rancher",          "baseline": 30, "retail_price": 3.49, "valentines": 1.5, "easter": 2, "halloween": 7, "holiday": 2},
-    45: {"name": "Hershey's Special Dark Minis", "baseline": 25, "retail_price": 6.49, "valentines": 7, "easter": 4, "halloween": 3, "holiday": 6},
-    46: {"name": "Reese's Pieces",         "baseline": 45, "retail_price": 4.99, "valentines": 2, "easter": 5, "halloween": 9, "holiday": 4},
-    47: {"name": "Hershey's Nuggets",      "baseline": 20, "retail_price": 7.99, "valentines": 5, "easter": 5, "halloween": 3, "holiday": 7}
-}
-
-N_PRODUCTS = list(product_profiles.keys())
 
 # --- Connect to Supabase ---
 supabase: Client = create_client(url, key)
 
-def generate_hyper_realistic_sales_data():
-    print("Starting hyper-realistic, transaction-level data generation...")
+def generate_gold_standard_data():
+    print("Starting gold standard data generation...")
+    
+    # --- DYNAMICALLY FETCH MASTER DATA ---
+    print("Fetching master data from Supabase...")
+    product_master_data = supabase.table('product_master').select('*').execute().data
+    df_products = pd.DataFrame(product_master_data)
+    
+    store_master_data = supabase.table('store_master').select('store_id, store_region').execute().data
+    df_stores = pd.DataFrame(store_master_data)
+    actual_store_ids = df_stores['store_id'].tolist()
+    
+    # Create a simple lookup for region by store_id
+    store_region_map = df_stores.set_index('store_id')['store_region'].to_dict()
+    southern_regions = ['Southeast', 'West'] # Define our "southern" regions
 
-    # --- DYNAMIC FIX: Fetch actual store and product IDs from the database ---
-    print("Fetching actual store IDs from store_master...")
-    store_master_data = supabase.table('store_master').select('store_id').execute().data
-    actual_store_ids = [store['store_id'] for store in store_master_data]
-    print(f"Found store IDs: {actual_store_ids}")
 
+    # --- GENERATION LOGIC ---
     all_transactions = []
     date_range = pd.to_datetime(pd.date_range(START_DATE, END_DATE))
 
-    for product_id in N_PRODUCTS:
-        profile = product_profiles[product_id]
-        print(f"Generating data for: {profile['name']}")
-        # Use the actual store IDs we fetched
+    for _, product in df_products.iterrows():
+        product_id = product['product_id']
+        product_category = product['product_category']
+        retail_price = product['retail_price']
+        print(f"Generating data for: {product['product_name']}")
+        
         for store_id in actual_store_ids:
+            store_region = store_region_map.get(store_id)
+            
             for day in date_range:
-                # --- 1. Calculate TOTAL expected sales for this day using our patterns ---
+                # --- BASELINE & PATTERNS ---
+                baseline_units = random.randint(10, 50) # A simple random baseline for this run
                 day_of_week = day.dayofweek
                 day_of_year = day.dayofyear
-
-                weekly_multiplier = np.select([day_of_week == 4, day_of_week == 5, day_of_week == 6], [1.5, 1.8, 1.2], default=1.0)
-
-                valentines_window = (day_of_year >= 30) and (day_of_year <= 45)
-                easter_window = (day_of_year >= 85) and (day_of_year <= 105)
-                halloween_window = (day_of_year >= 285) and (day_of_year <= 304)
-                holiday_window = (day_of_year >= 335) and (day_of_year <= 359)
-
-                holiday_multiplier = 1.0
-                if valentines_window: holiday_multiplier = profile['valentines']
-                elif easter_window: holiday_multiplier = profile['easter']
-                elif halloween_window: holiday_multiplier = profile['halloween']
-                elif holiday_window: holiday_multiplier = profile['holiday']
-
+                
+                weekly_multiplier = np.select([day_of_week >= 4], [1.7], default=1.0) # Simple weekend boost
+                
+                # --- CATEGORY & REGION-SPECIFIC SEASONALITY ---
+                seasonal_multiplier = 1.0
+                
+                if product_category == 'Ice Cream':
+                    # Sine wave for summer peak: peaks around day 195 (mid-July)
+                    base_seasonality = np.sin(2 * np.pi * (day_of_year - 105) / 365) + 1.5
+                    if store_region in southern_regions:
+                        # Higher baseline, wider season for southern regions
+                        seasonal_multiplier = base_seasonality * 1.5 + 0.5
+                    else:
+                        # Sharper peak for northern regions
+                        seasonal_multiplier = base_seasonality * 2.0
+                
+                else: # For Chocolate & Candy
+                    # Holiday-spike driven seasonality
+                    if (day_of_year >= 30) and (day_of_year <= 45): seasonal_multiplier = 4.0 # Valentines
+                    elif (day_of_year >= 85) and (day_of_year <= 105): seasonal_multiplier = 5.0 # Easter
+                    elif (day_of_year >= 285) and (day_of_year <= 304): seasonal_multiplier = 8.0 # Halloween
+                    elif (day_of_year >= 335) and (day_of_year <= 359): seasonal_multiplier = 7.0 # Christmas
+                
+                # Promotions & Noise
                 is_promo_day = np.random.choice([True, False], p=[0.2, 0.8])
                 promo_multiplier = random.uniform(2.0, 3.0) if is_promo_day else 1.0
-
                 noise = np.random.randint(-3, 4)
-
-                expected_total_units = int(np.maximum(0, profile['baseline'] * weekly_multiplier * holiday_multiplier * promo_multiplier + noise))
-
-                if expected_total_units == 0:
-                    continue
-
-                # --- 2. Simulate individual transactions for the day ---
+                
+                expected_total_units = int(np.maximum(0, baseline_units * weekly_multiplier * seasonal_multiplier * promo_multiplier + noise))
+                if expected_total_units == 0: continue
+                
+                # ... (Transaction generation logic remains the same) ...
                 num_transactions = random.randint(5, 15)
                 transaction_units = np.random.multinomial(expected_total_units, np.ones(num_transactions)/num_transactions)
-
                 for units in transaction_units:
-                    if units == 0:
-                        continue
-
-                    # --- 3. Set price for each transaction ---
-                    on_promotion_flag = False
-                    sale_price = profile['retail_price']
-
+                    if units == 0: continue
+                    on_promotion_flag = False; sale_price = retail_price
                     if is_promo_day and random.random() < 0.3:
                         on_promotion_flag = True
                         discount = random.choice([0.10, 0.15, 0.25])
-                        sale_price = round(profile['retail_price'] * (1 - discount), 2)
-
-                    all_transactions.append({
-                        "created_at": day,
-                        "product_id": product_id,
-                        "store_id": store_id,
-                        "units_sold": units,
-                        "on_promotion": on_promotion_flag,
-                        "sale_price": sale_price
-                    })
+                        sale_price = round(retail_price * (1 - discount), 2)
+                    all_transactions.append({"created_at": day, "product_id": product_id, "store_id": store_id, "units_sold": units, "on_promotion": on_promotion_flag, "sale_price": sale_price})
 
     final_df = pd.DataFrame(all_transactions)
     print(f"Generated {len(final_df)} total transactions.")
     return final_df
+
+
 
 
 def upload_to_supabase(df):
@@ -129,7 +123,7 @@ def upload_to_supabase(df):
     print("✅ Upload complete!")
 
 if __name__ == "__main__":
-    new_sales_data = generate_hyper_realistic_sales_data()
+    new_sales_data = generate_gold_standard_data()
     print("\nSample of generated data:")
     print(new_sales_data.head())
     
