@@ -6,7 +6,7 @@ import google.generativeai as genai
 
 # --- Page Config ---
 st.set_page_config(page_title="SQL Chatbot", layout="wide")
-st.title("🤖 Chat with Your Sales Database (RPC Method)")
+st.title("🤖 Chat with Your Sales Data")
 st.markdown("---")
 
 # --- API & DB Configuration ---
