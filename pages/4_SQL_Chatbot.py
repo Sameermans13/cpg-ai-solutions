@@ -1,63 +1,99 @@
 # --- pages/5_🤖_SQL_Chatbot.py ---
 
 import streamlit as st
-from langchain_community.utilities import SQLDatabase
-from langchain_experimental.sql import SQLDatabaseChain
-from langchain_google_genai import GoogleGenerativeAI
+from supabase import create_client, Client
 import google.generativeai as genai
-import sqlalchemy
 
 # --- Page Config ---
 st.set_page_config(page_title="SQL Chatbot", layout="wide")
-st.title("🤖 Chat with Your Sales Database (Text-to-SQL)")
+st.title("🤖 Chat with Your Sales Database (RPC Method)")
 st.markdown("---")
 
 # --- API & DB Configuration ---
 try:
+    # Use st.secrets for Supabase connection as well
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    supabase: Client = create_client(url, key)
+    
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    
-    db_user = st.secrets["DB_USER"]
-    db_password = st.secrets["DB_PASSWORD"]
-    db_host = st.secrets["DB_HOST"]
-    db_name = st.secrets["DB_NAME"]
-    db_port = st.secrets["DB_PORT"]
-    
-    # Create the database connection string
-    db_uri = f"postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
-    
-except KeyError as e:
-    st.error(f"A secret key is missing: {e}. Please check your .streamlit/secrets.toml file.", icon="🚨")
-    st.stop()
 except Exception as e:
-    st.error(f"An error occurred during configuration: {e}", icon="🚨")
+    st.error(f"A configuration error occurred: {e}. Please check your secrets.", icon="🚨")
     st.stop()
-
 
 # --- Main App Logic ---
-user_query = st.text_input("Ask a question about your sales data:", placeholder="e.g., What were the total units sold for KitKats?")
+st.write("Ask a question in plain English, and the AI will translate it to SQL, query the database, and give you the answer.")
+
+user_query = st.text_input("Your question:", placeholder="e.g., Which store has the highest total revenue?")
 
 if st.button("Get Answer"):
     if user_query:
-        with st.spinner("The AI analyst is thinking and querying the database..."):
+        with st.spinner("The AI analyst is thinking..."):
             try:
-                # Setup the database connection
-                db = SQLDatabase.from_uri(db_uri, include_tables=['daily_sales_summary', 'product_master', 'store_master'])
+                # 1. Generate the SQL query using an improved "Few-Shot" prompt
+                llm = genai.GenerativeModel('gemini-1.5-flash-latest')
                 
-                # Setup the LLM
-                llm = GoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0)
-                
-                # Create the SQL Database Chain
-                # We add use_query_checker=True to help prevent hallucinations
-                db_chain = SQLDatabaseChain.from_llm(llm, db, verbose=True, use_query_checker=True)
-                
-                # Run the query and get the result
-                result = db_chain.run(user_query)
-                
-                st.success("Here is the answer:")
-                st.markdown(result)
+                # --- NEW: ADVANCED FEW-SHOT PROMPT ---
+                schema_prompt = f"""
+                You are a world-class SQL writer. Given a user question, you will write a single, valid PostgreSQL query to answer it.
+                You must only write the SQL query and nothing else. Do not wrap the query in markdown.
 
-            except sqlalchemy.exc.OperationalError:
-                st.error("Could not connect to the database. Please check your connection details in the secrets file and ensure your network allows the connection.", icon="🔥")
+                My database has the following tables and columns:
+                1. daily_sales_summary (sale_date, product_id, store_id, total_units_sold, average_sale_price, was_on_promotion)
+                2. product_master (product_id, product_name, product_category, retail_price)
+                3. store_master (store_id, store_name, store_channel, store_region)
+
+                --- EXAMPLES ---
+
+                -- Example 1: Find the total sales for a specific product.
+                User Question: "How many units of KitKat 4-finger were sold?"
+                SQL Query:
+                SELECT SUM(t1.total_units_sold) FROM daily_sales_summary AS t1 JOIN product_master AS t2 ON t1.product_id = t2.product_id WHERE t2.product_name = 'KitKat 4-finger'
+
+                -- Example 2: Find the total revenue for a brand containing a special character.
+                User Question: "What was the total revenue for all Reese's products?"
+                SQL Query:
+                SELECT SUM(t1.total_units_sold * t1.average_sale_price) FROM daily_sales_summary AS t1 JOIN product_master AS t2 ON t1.product_id = t2.product_id WHERE t2.product_name LIKE 'Reese''s%'
+
+                -- Example 3: Find the top store channel for a product category.
+                User Question: "Which store channel sold the most candy?"
+                SQL Query:
+                SELECT t3.store_channel FROM daily_sales_summary AS t1 JOIN product_master AS t2 ON t1.product_id = t2.product_id JOIN store_master AS t3 ON t1.store_id = t3.store_id WHERE t2.product_category = 'Candy' GROUP BY t3.store_channel ORDER BY SUM(t1.total_units_sold) DESC LIMIT 1
+                
+                --- END EXAMPLES ---
+
+                User Question: "{user_query}"
+                SQL Query:
+                """
+                
+                response = llm.generate_content(schema_prompt)
+                sql_query = response.text.strip()
+
+                if sql_query.endswith(';'):
+                    sql_query = sql_query[:-1]
+
+                st.write("🔍 Generated SQL Query:")
+                st.code(sql_query, language="sql")
+
+                # 2. Execute the query
+                with st.spinner("Executing query against the database..."):
+                    rpc_response = supabase.rpc('execute_sql', {'query': sql_query}).execute()
+                    query_result = rpc_response.data
+
+                # 3. Formulate final answer
+                with st.spinner("Formulating final answer..."):
+                    final_prompt = f"""
+                    You are a helpful CPG business analyst. Given a user's question and the result from a database query, formulate a clear, human-readable answer.
+
+                    User Question: "{user_query}"
+                    Query Result: {query_result}
+                    Final Answer:
+                    """
+                    final_response = llm.generate_content(final_prompt)
+                    
+                    st.success("Here is the answer:")
+                    st.markdown(final_response.text)
+
             except Exception as e:
                 st.error(f"An error occurred: {e}")
     else:
