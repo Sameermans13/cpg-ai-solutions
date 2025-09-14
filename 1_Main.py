@@ -4,44 +4,56 @@ import plotly.express as px
 from supabase import create_client, Client
 from datetime import datetime
 import holidays
-from prophet import Prophet
-import google.generativeai as genai
-
-     
 
 # --------------------------
 # Supabase Connection
 # --------------------------
-url = "https://sywxhehahunevputgxdd.supabase.co"
-key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN5d3hoZWhhaHVuZXZwdXRneGRkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTczMDQxNDEsImV4cCI6MjA3Mjg4MDE0MX0.SGNrmklPobim7-zb4zs78e2i2VRrmV84gV7DIl2m5s8"
+# It's best practice to get these from secrets, even for the anon key.
+try:
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    supabase: Client = create_client(url, key)
+except KeyError:
+    st.error("Supabase URL or Key not found in secrets. Please check your .streamlit/secrets.toml file.")
+    st.stop()
 
-supabase: Client = create_client(url, key)
 
 # --------------------------
-# Fetch Data
+# Fetch Data Function
 # --------------------------
 @st.cache_data
 def load_data():
     """
-    This function now loads a pre-aggregated summary from a Materialized View in Supabase.
-    This is both fast and cloud-friendly.
+    This function correctly fetches ALL data from the materialized view,
+    handling pagination to overcome the 1,000-row limit.
     """
-    with st.spinner('Loading summarized sales data from Supabase...'):
-        # Fetch products (this is small and can still come from Supabase)
+    with st.spinner('Loading complete sales summary from Supabase...'):
+        # Fetch products (small table, no pagination needed)
         products = supabase.table("product_master").select("*").execute().data
         df_products = pd.DataFrame(products)
 
-        # Fetch the pre-aggregated daily sales data from our new view
-        daily_summary = supabase.table("daily_sales_summary").select("*").execute().data
-        df_sales = pd.DataFrame(daily_summary)
+        # --- Paginated fetch for the materialized view ---
+        all_summary_rows = []
+        page = 0
+        page_size = 1000
+        while True:
+            range_start = page * page_size
+            range_end = range_start + page_size - 1
+            page_data = supabase.table("daily_sales_summary").select("*").range(range_start, range_end).execute().data
+            
+            all_summary_rows.extend(page_data)
+            
+            if len(page_data) < page_size:
+                break
+            page += 1
+            
+        df_sales = pd.DataFrame(all_summary_rows)
         
-    # --- The data is already aggregated, so we just need to clean and feature engineer ---
-    
-    # Rename columns to match what the rest of the app expects
+    # --- Data Cleaning and Feature Engineering ---
     df_sales.rename(columns={
         'sale_date': 'created_at',
         'total_units_sold': 'units_sold',
-        'average_sale_price': 'average_sale_price', 
+        'average_sale_price': 'average_sale_price',
         'was_on_promotion': 'on_promotion'
     }, inplace=True)
 
@@ -51,7 +63,7 @@ def load_data():
     today = pd.to_datetime('today').tz_localize('UTC')
     df_sales = df_sales[df_sales['created_at'] <= today].copy()
 
-    # --- Feature engineering logic ---
+    # Feature engineering logic
     df_sales['on_promotion'] = df_sales['on_promotion'].fillna(False).astype(bool)
     df_sales['day_of_week'] = df_sales['created_at'].dt.day_name()
     df_sales['month'] = df_sales['created_at'].dt.month
@@ -61,9 +73,8 @@ def load_data():
 
     return df_products, df_sales
 
-
+# --- Load the data ---
 df_products, df_sales = load_data()
-
 
 
 

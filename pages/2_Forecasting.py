@@ -14,22 +14,56 @@ st.set_page_config(page_title="Demand Forecasting", layout="wide")
 # ...
 @st.cache_data
 def load_data():
-    # ... (Your complete load_data function code) ...
-    with st.spinner('Loading summarized sales data from Supabase...'):
+    """
+    This function now correctly fetches ALL data from the materialized view,
+    handling pagination AND includes all necessary feature engineering.
+    """
+    with st.spinner('Loading complete sales summary from Supabase...'):
+        # Fetch products (small table, no pagination needed)
         products = supabase.table("product_master").select("*").execute().data
         df_products = pd.DataFrame(products)
-        daily_summary = supabase.table("daily_sales_summary").select("*").execute().data
-        df_sales = pd.DataFrame(daily_summary)
-    df_sales.rename(columns={'sale_date': 'created_at','total_units_sold': 'units_sold','average_sale_price': 'average_sale_price','was_on_promotion': 'on_promotion'}, inplace=True)
+
+        # Paginated fetch for the materialized view
+        all_summary_rows = []
+        page = 0
+        page_size = 1000
+        while True:
+            range_start = page * page_size
+            range_end = range_start + page_size - 1
+            page_data = supabase.table("daily_sales_summary").select("*").range(range_start, range_end).execute().data
+            
+            all_summary_rows.extend(page_data)
+            
+            if len(page_data) < page_size:
+                break
+            page += 1
+            
+        df_sales = pd.DataFrame(all_summary_rows)
+        
+    # Data Cleaning
+    df_sales.rename(columns={
+        'sale_date': 'created_at',
+        'total_units_sold': 'units_sold',
+        'average_sale_price': 'average_sale_price',
+        'was_on_promotion': 'on_promotion'
+    }, inplace=True)
+
     df_sales["created_at"] = pd.to_datetime(df_sales["created_at"], utc=True)
+    
+    # Filter out future data
     today = pd.to_datetime('today').tz_localize('UTC')
     df_sales = df_sales[df_sales['created_at'] <= today].copy()
+
+    # --- Feature Engineering Logic ---
     df_sales['on_promotion'] = df_sales['on_promotion'].fillna(False).astype(bool)
     df_sales['day_of_week'] = df_sales['created_at'].dt.day_name()
-    df_sales['month'] = df_sales['created_at'].dt.month
-    df_sales['week_of_year'] = df_sales['created_at'].dt.isocalendar().week
+    
+    # --- THIS IS THE RESTORED CODE ---
+    # It must be included for the Prophet model to work.
     us_holidays = holidays.US(years=df_sales['created_at'].dt.year.unique())
     df_sales['is_holiday'] = df_sales['created_at'].dt.date.isin(us_holidays)
+    # --- END RESTORED CODE ---
+
     return df_products, df_sales
 
 # Supabase Connection
