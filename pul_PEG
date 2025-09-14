@@ -1,0 +1,62 @@
+from yahooquery import Ticker
+
+def calculate_peg(ticker_symbol):
+    ticker = Ticker(ticker_symbol)
+
+    # 1️⃣ Get P/E ratio robustly
+    pe_ratio = None
+    # Check key_stats first
+    try:
+        ks = ticker.key_stats.get(ticker_symbol, {})
+        pe_ratio = ks.get('trailingPE')
+    except:
+        pass
+    # Check summary_detail if not found
+    if pe_ratio is None:
+        try:
+            sd = ticker.summary_detail.get(ticker_symbol, {})
+            pe_ratio = sd.get('trailingPE')
+        except:
+            pass
+    if pe_ratio is None:
+        print(f"P/E ratio not available for {ticker_symbol}")
+        return None
+
+    # 2️⃣ Get forward EPS estimate (+1y)
+    try:
+        trend = ticker.earnings_trend[ticker_symbol]['trend']
+        next_year = next((p for p in trend if p['period']=='+1y'), None)
+        if not next_year:
+            print(f"Next year EPS estimate not found for {ticker_symbol}")
+            return None
+
+        forward_eps = next_year['earningsEstimate']['avg']
+        last_year_eps = next_year['earningsEstimate']['yearAgoEps']
+
+        # 3️⃣ Calculate forward EPS growth rate
+        growth_rate = (forward_eps / last_year_eps) - 1
+    except Exception as e:
+        print("Error fetching EPS estimates:", e)
+        return None
+
+    # 4️⃣ Compute PEG ratio
+    peg = pe_ratio / (growth_rate * 100)
+    return {
+        'ticker': ticker_symbol,
+        'pe_ratio': pe_ratio,
+        'forward_eps': forward_eps,
+        'last_year_eps': last_year_eps,
+        'eps_growth_rate': growth_rate,
+        'peg_ratio': peg
+    }
+
+
+# Example usage
+result = calculate_peg("NKE")
+if result:
+    print("Ticker:", result['ticker'])
+    print("P/E Ratio:", result['pe_ratio'])
+    print("Forward EPS:", result['forward_eps'])
+    print("Last Year EPS:", result['last_year_eps'])
+    print("EPS Growth Rate:", f"{result['eps_growth_rate']*100:.2f}%")
+    print("PEG Ratio:", f"{result['peg_ratio']:.2f}")
