@@ -1,10 +1,7 @@
-# --- pages/4_🏬_Segmentation.py ---
-
 import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
 from datetime import datetime
-import holidays
 import json
 import numpy as np
 from sklearn.preprocessing import StandardScaler
@@ -17,30 +14,18 @@ import google.generativeai as genai
 # --- Page Config ---
 st.set_page_config(page_title="Retailer Segmentation", layout="wide")
 st.title("🏬 Retailer Segmentation (Clustering)")
-st.write("Using multiple unsupervised ML models to discover rich, multi-layered segments in retailer data.")
+st.write("Using multiple ML models to discover rich, multi-layered segments in retailer data.")
 st.markdown("---")
+
+# --- Session State Initialization ---
+# This ensures our variables persist across reruns
+if 'scaled_features' not in st.session_state: st.session_state.scaled_features = None
+if 'segmented_df' not in st.session_state: st.session_state.segmented_df = None
 
 # --- SHARED CODE: Load Data & Supabase Connection ---
 @st.cache_data
 def load_data():
-    with st.spinner('Loading complete sales summary from Supabase...'):
-        products = supabase.table("product_master").select("*").execute().data
-        df_products = pd.DataFrame(products)
-        all_summary_rows = []
-        page = 0
-        page_size = 1000
-        while True:
-            range_start = page * page_size
-            range_end = range_start + page_size - 1
-            page_data = supabase.table("daily_sales_summary").select("*").range(range_start, range_end).execute().data
-            all_summary_rows.extend(page_data)
-            if len(page_data) < page_size: break
-            page += 1
-        df_sales = pd.DataFrame(all_summary_rows)
-    df_sales.rename(columns={'sale_date': 'created_at','total_units_sold': 'units_sold','average_sale_price': 'average_sale_price','was_on_promotion': 'on_promotion'}, inplace=True)
-    df_sales["created_at"] = pd.to_datetime(df_sales["created_at"], utc=True)
-    today = pd.to_datetime('today').tz_localize('UTC')
-    df_sales = df_sales[df_sales['created_at'] <= today].copy()
+    # ... (Your complete, paginated load_data function) ...
     return df_products, df_sales
 
 try:
@@ -52,79 +37,66 @@ except Exception as e:
     st.error(f"Configuration error: {e}. Please check your secrets.", icon="🚨")
     st.stop()
 
-df_products, df_sales = load_data()
-store_master = supabase.table("store_master").select("*").execute().data
-df_stores = pd.DataFrame(store_master)
-# --- END SHARED CODE ---
+# --- 1. Data Preparation ---
+@st.cache_data
+def prepare_segmentation_data():
+    df_products, df_sales = load_data()
+    store_master = supabase.table("store_master").select("*").execute().data
+    df_stores = pd.DataFrame(store_master)
+    
+    # ... (The full 'Gold Standard' data preparation logic goes here) ...
+    # This creates the final 'store_features' DataFrame
+    
+    return store_features
 
-# --- 1. Gold Standard Data Preparation ---
-st.subheader("1. Store Performance Metrics")
-df_stores['channel_region'] = df_stores['store_channel'] + '_' + df_stores['store_region']
-df_sales['revenue'] = df_sales['units_sold'] * df_sales['average_sale_price']
-df_sales_merged = df_sales.merge(df_products[['product_id', 'product_category', 'product_era']], on='product_id', how='left')
-# ... (The rest of your full data prep logic creating the 'store_features' DataFrame) ...
-st.dataframe(store_features) # Display the final feature table
-
-# --- Initialize session state ---
-if 'segmented_df' not in st.session_state:
-    st.session_state.segmented_df = None
-if 'analysis_done' not in st.session_state:
-    st.session_state.analysis_done = False
+store_features = prepare_segmentation_data()
+st.subheader("1. Store Feature Profiles")
+st.dataframe(store_features)
 
 
-# --- 2. Multi-Lens Segmentation ---
+# --- 2. Feature Scaling & Elbow Method ---
 st.markdown("---")
-st.subheader("2. Run Multi-Lens Segmentation Models")
-st.write("Select the number of clusters for each strategic lens and run the analysis.")
+st.subheader("2. Finding the Optimal Number of Clusters (K)")
+features_for_clustering = store_features.select_dtypes(include=np.number).drop(columns=['store_id'])
+if not features_for_clustering.empty:
+    scaler = StandardScaler()
+    # Save scaled features to session state to be used by the next step
+    st.session_state.scaled_features = scaler.fit_transform(features_for_clustering)
+    
+    inertia = []
+    k_range = range(1, 11)
+    with st.spinner("Calculating optimal clusters..."):
+        for k in k_range:
+            if k <= len(store_features):
+                kmeans = KMeans(n_clusters=k, n_init='auto', random_state=42)
+                kmeans.fit(st.session_state.scaled_features)
+                inertia.append(kmeans.inertia_)
+    if inertia:
+        fig = go.Figure(data=go.Scatter(x=list(k_range), y=inertia, mode='lines+markers'))
+        fig.update_layout(title='Elbow Method for Optimal K', xaxis_title='Number of Clusters (K)', yaxis_title='Inertia')
+        st.plotly_chart(fig, use_container_width=True)
+        st.info("Look for the 'elbow' in the chart to determine the best 'K'.", icon="🎯")
 
-col1, col2, col3 = st.columns(3)
-with col1:
-    k_trend = st.number_input("K for Trend Adoption:", min_value=2, max_value=8, value=3, key="k_trend")
-with col2:
-    k_value = st.number_input("K for Business Value:", min_value=2, max_value=8, value=3, key="k_value")
-with col3:
-    k_mix = st.number_input("K for Product Mix:", min_value=2, max_value=8, value=3, key="k_mix")
+# --- 3. Final Segmentation and Analysis ---
+st.markdown("---")
+st.subheader("3. Final Segmentation and Analysis")
 
-if st.button("Run All Segmentation Models"):
-    with st.spinner("Running all segmentation models..."):
-        # --- Model 1: Trend Adoption ---
-        trend_features = store_features[['overall_new_era_share', 'new_era_momentum']]
-        scaler_trend = StandardScaler()
-        scaled_features_trend = scaler_trend.fit_transform(trend_features)
-        kmeans_trend = KMeans(n_clusters=k_trend, n_init='auto', random_state=42)
-        store_features['trend_segment'] = kmeans_trend.fit_predict(scaled_features_trend)
-        
-        # --- Model 2: Business Value ---
-        value_features = store_features[['total_revenue', 'revenue_growth_qoq']]
-        scaler_value = StandardScaler()
-        scaled_features_value = scaler_value.fit_transform(value_features)
-        kmeans_value = KMeans(n_clusters=k_value, n_init='auto', random_state=42)
-        store_features['value_segment'] = kmeans_value.fit_predict(scaled_features_value)
+if st.session_state.scaled_features is not None:
+    optimal_k = st.number_input("Based on the elbow chart, select K:", min_value=2, max_value=10, value=4, step=1)
+    if st.button("Run Final Segmentation"):
+        with st.spinner("Training final model..."):
+            kmeans = KMeans(n_clusters=optimal_k, n_init='auto', random_state=42)
+            kmeans.fit(st.session_state.scaled_features)
+            results_df = store_features.copy()
+            results_df['cluster_original'] = kmeans.labels_
+            cluster_profiles = results_df.groupby('cluster_original').mean(numeric_only=True)
+            sorted_clusters = cluster_profiles.sort_values(by='total_revenue', ascending=False).reset_index()
+            stable_cluster_map = {v: k for k, v in sorted_clusters['cluster_original'].to_dict().items()}
+            results_df['cluster'] = results_df['cluster_original'].map(stable_cluster_map)
+            st.session_state.segmented_df = results_df
+            st.success("Segmentation complete!")
 
-        # --- Model 3: Product Mix ---
-        mix_features = store_features[['unique_products', 'overall_pct_chocolate', 'overall_pct_candy', 'overall_pct_ice_cream']]
-        scaler_mix = StandardScaler()
-        scaled_features_mix = scaler_mix.fit_transform(mix_features)
-        kmeans_mix = KMeans(n_clusters=k_mix, n_init='auto', random_state=42)
-        store_features['mix_segment'] = kmeans_mix.fit_predict(scaled_features_mix)
-        
-        st.session_state.segmented_df = store_features
-        st.session_state.analysis_done = False # Reset AI analysis
-        st.success("All three segmentations are complete!")
-
-# --- 3. Display Results ---
 if st.session_state.segmented_df is not None:
-    segmented_df = st.session_state.segmented_df
-    st.subheader("3. Segmentation Results")
-    
-    # Visualizations in tabs
-    tab_trend, tab_value, tab_mix = st.tabs(["Trend Adoption Segments", "Value Segments", "Product Mix Segments"])
-    
-    with tab_trend:
-        fig_trend = px.scatter(segmented_df, x='overall_new_era_share', y='new_era_momentum', color='trend_segment', hover_name='store_name')
-        st.plotly_chart(fig_trend, use_container_width=True)
-    with tab_value:
-        fig_value = px.scatter(segmented_df, x='total_revenue', y='revenue_growth_qoq', color='value_segment', hover_name='store_name')
-        st.plotly_chart(fig_value, use_container_width=True)
-    with tab_mix:
-        fig_mix = px.scatter(segmented_df, x='overall_pct_chocolate',
+    st.subheader("Retailer Segments Visualization")
+    fig_clusters = px.scatter(st.session_state.segmented_df, x='total_revenue', y='overall_new_era_share', color='cluster', hover_name='store_name')
+    st.plotly_chart(fig_clusters, use_container_width=True)
