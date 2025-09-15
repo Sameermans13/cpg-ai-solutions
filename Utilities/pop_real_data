@@ -8,17 +8,17 @@ import random
 url = "https://sywxhehahunevputgxdd.supabase.co"
 key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN5d3hoZWhhaHVuZXZwdXRneGRkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTczMDQxNDEsImV4cCI6MjA3Mjg4MDE0MX0.SGNrmklPobim7-zb4zs78e2i2VRrmV84gV7DIl2m5s8"
 
-
-
-START_DATE = date(2025, 1, 1)
-END_DATE = date(2025, 12, 31) 
-
-
-# --- Connect to Supabase ---
 supabase: Client = create_client(url, key)
 
+# --- THE FIX: Extend the date range to over 2 years ---
+START_DATE = date(2023, 9, 1) 
+END_DATE = date(2025, 12, 31) 
+# --- END FIX ---
+
+
+
 def generate_gold_standard_data():
-    print("Starting gold standard data generation...")
+    print("Starting gold standard data generation for 2+ years...")
     
     # --- DYNAMICALLY FETCH MASTER DATA ---
     print("Fetching master data from Supabase...")
@@ -29,71 +29,70 @@ def generate_gold_standard_data():
     df_stores = pd.DataFrame(store_master_data)
     actual_store_ids = df_stores['store_id'].tolist()
     
-    # Create a simple lookup for region by store_id
     store_region_map = df_stores.set_index('store_id')['store_region'].to_dict()
-    southern_regions = ['Southeast', 'West'] # Define our "southern" regions
-
+    southern_regions = ['Southeast', 'West']
+    trend_regions = ['West', 'Northeast']
 
     # --- GENERATION LOGIC ---
     all_transactions = []
     date_range = pd.to_datetime(pd.date_range(START_DATE, END_DATE))
 
     for _, product in df_products.iterrows():
-        product_id = product['product_id']
-        product_category = product['product_category']
-        retail_price = product['retail_price']
         print(f"Generating data for: {product['product_name']}")
         
         for store_id in actual_store_ids:
             store_region = store_region_map.get(store_id)
             
             for day in date_range:
-                # --- BASELINE & PATTERNS ---
-                baseline_units = random.randint(10, 50) # A simple random baseline for this run
+                baseline_units = random.randint(10, 50)
                 day_of_week = day.dayofweek
                 day_of_year = day.dayofyear
+                days_from_start = (day - pd.to_datetime(START_DATE)).days
                 
-                weekly_multiplier = np.select([day_of_week >= 4], [1.7], default=1.0) # Simple weekend boost
+                weekly_multiplier = np.select([day_of_week >= 4], [1.7], default=1.0)
                 
-                # --- CATEGORY & REGION-SPECIFIC SEASONALITY ---
                 seasonal_multiplier = 1.0
+                era_multiplier = 1.0
+
+                if product['product_era'] == 'New Era':
+                    growth_rate = 0.005 if store_region in trend_regions else 0.002
+                    era_multiplier = 1 + (days_from_start * growth_rate)
                 
-                if product_category == 'Ice Cream':
-                    # Sine wave for summer peak: peaks around day 195 (mid-July)
-                    base_seasonality = np.sin(2 * np.pi * (day_of_year - 105) / 365) + 1.5
-                    if store_region in southern_regions:
-                        # Higher baseline, wider season for southern regions
-                        seasonal_multiplier = base_seasonality * 1.5 + 0.5
-                    else:
-                        # Sharper peak for northern regions
-                        seasonal_multiplier = base_seasonality * 2.0
-                
+                if product['product_category'] == 'Ice Cream':
+                    base_seasonality = np.sin(2 * np.pi * (day_of_year - 105) / 365) + 1.2
+                    seasonal_multiplier = base_seasonality * 1.8
                 else: # For Chocolate & Candy
-                    # Holiday-spike driven seasonality
-                    if (day_of_year >= 30) and (day_of_year <= 45): seasonal_multiplier = 4.0 # Valentines
-                    elif (day_of_year >= 85) and (day_of_year <= 105): seasonal_multiplier = 5.0 # Easter
-                    elif (day_of_year >= 285) and (day_of_year <= 304): seasonal_multiplier = 8.0 # Halloween
-                    elif (day_of_year >= 335) and (day_of_year <= 359): seasonal_multiplier = 7.0 # Christmas
+                    if (day_of_year >= 30) and (day_of_year <= 45): seasonal_multiplier = 4.0
+                    elif (day_of_year >= 85) and (day_of_year <= 105): seasonal_multiplier = 5.0
+                    elif (day_of_year >= 285) and (day_of_year <= 304): seasonal_multiplier = 8.0
+                    elif (day_of_year >= 335) and (day_of_year <= 359): seasonal_multiplier = 7.0
                 
-                # Promotions & Noise
                 is_promo_day = np.random.choice([True, False], p=[0.2, 0.8])
                 promo_multiplier = random.uniform(2.0, 3.0) if is_promo_day else 1.0
                 noise = np.random.randint(-3, 4)
                 
-                expected_total_units = int(np.maximum(0, baseline_units * weekly_multiplier * seasonal_multiplier * promo_multiplier + noise))
+                expected_total_units = int(np.maximum(0, baseline_units * weekly_multiplier * seasonal_multiplier * era_multiplier * promo_multiplier + noise))
                 if expected_total_units == 0: continue
                 
-                # ... (Transaction generation logic remains the same) ...
                 num_transactions = random.randint(5, 15)
                 transaction_units = np.random.multinomial(expected_total_units, np.ones(num_transactions)/num_transactions)
                 for units in transaction_units:
                     if units == 0: continue
-                    on_promotion_flag = False; sale_price = retail_price
+                    on_promotion_flag = False; sale_price = product['retail_price']
                     if is_promo_day and random.random() < 0.3:
                         on_promotion_flag = True
                         discount = random.choice([0.10, 0.15, 0.25])
-                        sale_price = round(retail_price * (1 - discount), 2)
-                    all_transactions.append({"created_at": day, "product_id": product_id, "store_id": store_id, "units_sold": units, "on_promotion": on_promotion_flag, "sale_price": sale_price})
+                        sale_price = round(product['retail_price'] * (1 - discount), 2)
+                    
+                    # --- THE FIX IS HERE ---
+                    all_transactions.append({
+                        "created_at": day, 
+                        "product_id": product['product_id'], # Changed product_id to product['product_id']
+                        "store_id": store_id, 
+                        "units_sold": units, 
+                        "on_promotion": on_promotion_flag, 
+                        "sale_price": sale_price
+                    })
 
     final_df = pd.DataFrame(all_transactions)
     print(f"Generated {len(final_df)} total transactions.")
