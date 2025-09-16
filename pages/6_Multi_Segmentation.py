@@ -234,8 +234,8 @@ if 'final_display_df' in st.session_state and st.session_state.final_display_df 
     
     # --- 5. Save to Database ---
     st.markdown("---")
-    st.subheader("5. Save Final Segments to Database")
-    if st.button("💾 Save Final Segments to Supabase"):
+    st.subheader("5. Save Final Segments to CRM")
+    if st.button("💾 Save Final Segments to CRM"):
         with st.spinner("Updating database..."):
             try:
                 service_key = st.secrets["SUPABASE_SERVICE_KEY"]
@@ -250,7 +250,7 @@ if 'final_display_df' in st.session_state and st.session_state.final_display_df 
                         'mix_segment': row['mix_segment_name']
                     }).eq('store_id', row['store_id']).execute()
                 
-                st.success("Successfully saved all three segment labels for each store to Supabase!")
+                st.success("Successfully saved all three segment labels for each store to CRM!")
 
             except Exception as e:
                 st.error(f"An error occurred while saving to the database: {e}")
